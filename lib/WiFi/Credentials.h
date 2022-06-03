@@ -1,7 +1,7 @@
-const char* MyNetwork = "BaldGuys";
-const char* MyPassword = "Checkthefridge";
-const char* mqtt_user = "FlespiToken fxJCTwh7OkPDUuFRwGa4hZHj9BM9TC6XZDpGZuDCCh3nzw4V34NaRijOJTLrlIc8";
+const char* MyNetwork = "YOURE WIFI SSID";
+const char* MyPassword = "YOUR WIFI PASSWORD";
+const char* mqtt_user = "FlespiToken YOUR FLESPIO TOKEN";
 const char* mqtt_pass = "";
 const char* mqtt_broker = "mqtt.flespi.io";
-const char* mqtt_outTopic ="esp/commands/out";
-const char* mqtt_inTopic = "esp/commands/in";
+const char* mqtt_outTopic ="YOUR BOARD NAME FOR OUTGOING MESSAGES";
+const char* mqtt_inTopic = "YOUR BOARD NAME FOR INCOMING MESSAGES";
