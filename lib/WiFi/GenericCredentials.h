@@ -1,5 +1,5 @@
 // This File should be renamed to Credentials.h before being used in a project.
-const char* MyNetwork = "YOURE WIFI SSID";
+const char* MyNetwork = "YOUR WIFI SSID";
 const char* MyPassword = "YOUR WIFI PASSWORD";
 const char* mqtt_user = "FlespiToken YOUR FLESPIO TOKEN";
 const char* mqtt_pass = "";
