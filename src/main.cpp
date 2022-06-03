@@ -5,6 +5,8 @@
 #include <WiFiUdp.h>
 #include <PubSubClient.h>
 #include "Credentials.h"
+#include <vector>
+#include <Alarms/Alarms.cpp>
 
 // Define NTP Client to get time and stepper motor
 WiFiUDP ntpUDP;
@@ -23,35 +25,34 @@ const char *brokerPass = mqtt_pass;   // Defined in Credentials.h
 const char *broker = mqtt_broker;     // Defined in Credentials.h
 const char *outTopic = mqtt_outTopic; // Defined in Credentials.h
 const char *inTopic = mqtt_inTopic;   // Defined in Credentials.h
-bool clockwise = true;
-bool alarm_set = false;
 
 // Variables to save date and time
 String formattedDate;
 String dayStamp;
 String timeStamp;
 String HourMin;
-String AlarmTime = "11:09";
+String AlarmTime;
 const String TriggerPhrase = "Set Alarm - ";
+int Day_of_week;
+String month;
+std::vector<String> Week_days{"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+std::vector<Alarm> alarms;
 
 void close_blinds()
 {
-  for (int i = 0; i < 4096; i++)
+  for (int i = 0; i < 20480; i++)
   {
-    stepper.step(false);
+    stepper.step(true);
     delay(0.5);
   }
 }
 
 void open_blinds()
 {
-  for (int j = 0; j < 5; j++)
+  for (int i = 0; i < 20480; i++)
   {
-    for (int i = 0; i < 4096; i++)
-    {
-      stepper.step(true);
-      delay(0.5);
-    }
+    stepper.step(false);
+    delay(0.5);
   }
 }
 
@@ -65,17 +66,32 @@ void wifi_init()
     delay(500);
     Serial.print(".");
   }
-  // Print local IP address and start web server
   Serial.println("");
   Serial.println("WiFi connected.");
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 }
 
+void checkDST()
+{
+  String dayNum = formattedDate.substring(8, 10);
+  int day = timeClient.getDay();
+  if (month.toInt() == 11 && dayNum.toInt() < 8 && day == 0)
+  {
+    // First sunday of November at 2AM
+    timeClient.setTimeOffset(-25200);
+  }
+  else if (month.toInt() == 3 && (dayNum.toInt() > 7 && dayNum.toInt() < 15) && day == 0)
+  {
+    // Second sunday of March at 2AM
+    timeClient.setTimeOffset(-28800);
+  }
+  //The exact time is not needed here since these will happen while im asleep.
+}
+
 void clock_init()
 {
-  // Initialize a NTPClient to get time
-  timeClient.begin();
+  timeClient.begin(); // Initialize a NTPClient to get time
   // Set offset time in seconds to adjust for your timezone, for example: GMT +1 = 3600.
   timeClient.setTimeOffset(-25200); // Vancouver is -8 = -28800 in Fall, -25200 in Spring
 }
@@ -87,53 +103,66 @@ void callback(char *topic, byte *payload, unsigned int length)
   String s = "";
   for (unsigned int i = 0; i < length; i++)
   {
-    s += (char)payload[i]; //set alarm - 11:30
+    s += (char)payload[i];
   }
+  //set alarm - 11:30/4
+  //set alarm - HH:MM/D
   Serial.println(s);
+  String s_str = String(s);   //string to convert all to lower for handling more inputs
+  s_str.toLowerCase();
   size_t found = s.indexOf(TriggerPhrase);
-  if (found != -1)
-  {
-    Serial.println("Great success!");
-    AlarmTime = s.substring(TriggerPhrase.length());
-    Serial.println("new alarm is " + AlarmTime);
-    String Alarm_pub_msg = "Alarm set for " + String(AlarmTime);
-    if (mqttClient.publish(outTopic, Alarm_pub_msg.c_str()))
+    if (found != -1)
     {
-      alarm_set = true;
+      Serial.println("Great success!");
+      int pos = s.indexOf("/");
+      AlarmTime = s.substring(TriggerPhrase.length(), pos); // Parse into HHMM
+      String DoW = s.substring(pos + 1);    // Parse into single character (which should be an int)
+      int Alarm_DoW;  //Alarm Day of Week int (0 = Sunday, 6 = Saturday)
+      if(isDigit(DoW[0]))
+      {
+        Alarm_DoW = DoW.toInt();
+      }
+      else{
+        Alarm_DoW = 0;
+      }
+      Serial.println("new alarm is " + AlarmTime + " on " + Week_days.at(Alarm_DoW));
+      String Alarm_pub_msg = "Alarm set for " + String(AlarmTime) + " on " + Week_days.at(Alarm_DoW);
+      if (mqttClient.publish(outTopic, Alarm_pub_msg.c_str()))
+      {
+        Alarm A(Alarm_DoW, AlarmTime);
+        alarms.push_back(A);
+        Serial.println("Added Alarm for " + A.get_time() + " on " + A.get_day());
+      }
     }
-  }
-  else
-  {
-    if (mqttClient.publish(outTopic, "Alarm not set"))
+    else if (s_str == "close blinds")
     {
-      alarm_set = false;
-      Serial.println("Error - Alarm not set");
+      if (mqttClient.publish(outTopic, "Closing blinds"))
+      {
+        close_blinds();
+        Serial.println("Closing blinds");
+      }
     }
-  }
-  if (s == "Close blinds")
-  {
-    if (mqttClient.publish(outTopic, "Closing blinds"))
+    else if(s_str == "open blinds")
     {
-      close_blinds();
-      Serial.println("Closing blinds");
+      if (mqttClient.publish(outTopic, "Opening blinds"))
+      {
+        open_blinds();
+        Serial.println("Opening blinds");
+      }
     }
-  }
-  else if(s == "Open blinds")
-  {
-    if (mqttClient.publish(outTopic, "Opening blinds"))
+    else if (s_str == "delete alarms" || s_str == "clear alarms")
     {
-      open_blinds();
-      Serial.println("Opening blinds");
+      alarms.~vector(); // clears alarm vector
+      Serial.println("Deleted all alarms");
     }
-  }
-  else
-  {
-    const char* msg = "Invalid argument. Valid commands are: 'Set Alarm - HH:MM', 'Open blinds', 'Close blinds'";
-    if (mqttClient.publish(outTopic, msg))
+    else
     {
-      Serial.println("Invalid argument");
+      const char* msg = "Invalid argument. Valid commands are: 'Set Alarm - HH:MM/D', 'Delete Alarms', 'Open blinds', 'Close blinds'";
+      if (mqttClient.publish(outTopic, msg))
+      {
+        Serial.println(msg);
+      }
     }
-  }
 }
 
 void mqtt_init()
@@ -172,45 +201,50 @@ void get_time()
   if ((millis() - timeMillis) > 5000)
   {
     timeMillis = millis();
-    formattedDate = timeClient.getFormattedDate();
+    formattedDate = timeClient.getFormattedDate();  // Comes in as YYYY-MM-DDTHH:MM:SSZ
     Serial.println(formattedDate);
-    int splitT = formattedDate.indexOf("T"); // Extract date
+    int splitT = formattedDate.indexOf("T"); 
     dayStamp = formattedDate.substring(0, splitT);
-    Serial.print("DATE: " + String(dayStamp));
-    timeStamp = formattedDate.substring(splitT + 1, formattedDate.length() - 1); // Extract time
+    Serial.print("DATE: " + String(dayStamp));      // Extract date to YYYY-MM-DD
+    timeStamp = formattedDate.substring(splitT + 1, formattedDate.length() - 1); // Extract time to HH:MM:SS
     Serial.print(" HOUR: " + String(timeStamp));
-    HourMin = timeStamp.substring(0, 5);
-    Serial.println(" Formatted HOUR:MIN is: " + HourMin);
-    // if (mqttClient.publish(outTopic, timeStamp.c_str())){
-    //   Serial.println("Time published");
-    // }
+    HourMin = timeStamp.substring(0, 5);            // Extract to HH:MM
+    Serial.print(" Formatted HOUR:MIN is: " + HourMin);
+    Day_of_week = timeClient.getDay();
+    Serial.println(" Today is " + Week_days.at(Day_of_week));
+    month = formattedDate.substring(5, 7);
   }
-}
-
-void rotate_motors()
-{
-  for (int i = 0; i < 4096; i++)
-  {
-    stepper.step(clockwise);
-    //stepper.stepCW();
-    int currstep = stepper.getStep();
-    if (currstep % 64 == 0)
-    {
-      Serial.print("Current position is ");
-      Serial.println(currstep);
-    }
-    delay(0.5);
-  }
-  clockwise = !clockwise;
-  delay(1000);
 }
 
 void check_alarm()
 {
-  if ((alarm_set) && HourMin == AlarmTime)
+  for (unsigned int i = 0; i < alarms.size(); i++)
   {
-    Serial.println("-----ALARM GOING OFF-----");
-    rotate_motors();
+    if ((alarms.at(i).get_day() == Day_of_week) && (alarms.at(i).get_time() == HourMin))
+    {
+      if (alarms.at(i).get_func() == "open blinds")
+      {
+        Serial.println("Alarm going off - open blinds");
+        open_blinds();
+      }
+      alarms.at(i).ringing();
+    }
+  }
+  auto iter = alarms.begin();
+  while (iter != alarms.end())
+  {
+    if ((*iter).rung() && !(*iter).is_recurring())
+    {
+      iter = alarms.erase(iter);  //Deletes alarm obj from vector. Returns next valid iterator so else statement that follows is valid
+    }
+    else if (iter->rung() && iter->is_recurring())
+    {
+      iter->reset_rung(); // resets has_rung to false
+    }
+    else
+    {
+      iter++;
+    }
   }
 }
 
@@ -228,5 +262,4 @@ void loop()
   get_time();
   check_alarm();
   mqtt_loop();
-  // rotate_motors();
 }
